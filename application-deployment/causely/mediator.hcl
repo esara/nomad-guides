@@ -1,14 +1,9 @@
 # config.hcl
-datacenters = ["dc1"]
-cluster_name = "XXX"
-gateway_host = "gw.causely.app"
-gateway_token = "ZZZ"
-
-mediator_image   = "docker.io/esara/mediator:0.0.41-0-gf8286156069e40a3"
+mediator_image   = "docker.io/causelyai/mediator:v1.0.83-0-g6559d4c064695c5b"
 mediator_cpu    = 2000
 mediator_memory = 1024
 
-ml_image   = "docker.io/esara/mediator_ml:0.0.41-0-gf8286156069e40a3"
+ml_image   = "docker.io/causelyai/mediator_ml:v1.0.83-0-g6559d4c064695c5b"
 ml_cpu    = 4000
 ml_memory = 8192
 

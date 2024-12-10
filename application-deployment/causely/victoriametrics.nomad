@@ -61,10 +61,11 @@ job "victoriametrics" {
       config {
         image = var.victoriametrics_image
         args  = [
-          "-search.maxConcurrentRequests=128",
-          "-search.maxQueryDuration=5m",
-          "-retentionPeriod=1d",
-          "-search.maxUniqueTimeseries=3000000",
+          "-search.maxConcurrentRequests=128"
+          "-search.maxUniqueTimeseries=3000000"
+          "-search.maxQueryDuration=5m"
+          "-search.maxQueryLen=65536"
+          "-retentionPeriod=1d"
           "-storageDataPath=/local/victoria-metrics"
         ]
         port_map {

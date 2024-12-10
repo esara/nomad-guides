@@ -47,7 +47,7 @@ variable "nfs_path" {
 }
 
 job "mediator" {
-  datacenters = var.datacenters
+  datacenters = {{ env "node.datacenter" }}
 
   type = "service"
 
@@ -91,6 +91,10 @@ job "mediator" {
         }
       }
 
+      env {
+        CAUSELY_GATEWAY_TOKEN = var.gateway_token
+      }
+
       resources {
         cpu    = var.mediator_cpu
         memory = var.mediator_memory
@@ -111,9 +115,8 @@ job "mediator" {
         destination = "/config/config.yaml"
         data = <<EOF
         gateway:
-          host: var.mediator_image
+          host: gw.causely.app
           port: 443
-          token: var.mediator_token
           tls: true
           insecure: false
 
@@ -132,7 +135,7 @@ job "mediator" {
 
         ml:
           enabled: true
-          host: ml
+          host: causelyml.service.{{ env "node.datacenter" }}.consul
           port: 8361
           token: ""
           tls: false
@@ -144,16 +147,16 @@ job "mediator" {
 
         global:
           host_root: /host
-          cluster_name: var.cluster_name
+          cluster_name: {{ env "node.datacenter" }}
 
         server:
           listen_port: 50051
 
         webserver:
-          port: 8082
+          port: 8362
 
         time_series:
-          hostname: victoriametrics
+          hostname: causelyvictoria.service.{{ env "node.datacenter" }}.consul
           port: 8428
 
         scrapers:
@@ -162,7 +165,7 @@ job "mediator" {
             sync_interval: 60s
             logging:
               scraper:
-                level: debug
+                level: info
               repository:
                 level: info
             service_endpoint: http://consul-server.consul.svc.cluster.local:8500
@@ -194,50 +197,45 @@ job "mediator" {
                   - go-applications
                   - java-applications
                   - python-applications
-                  - postgres
-                  - redis
-                  - kafka
-                  - rabbitmq
             exporters:
               go-applications:
                 entities:
-                  - attributes:
-                      namespace:
-                        label: ["yext_site"]
-                      name:
-                        label: [job"]
-                    entityType: ApplicationInstance
+                  - entity:
+                      workload: {}
+
+                    discovery:
+                      - nomad_allocation:
+                          namespace: "yext_site"
+                          allocation_id: "alloc_id"
                     metrics:
                       - attribute: MutexWaitSecondsTotal
-                        query: sum by (yext_site, job) (go_sync_mutex_wait_total_seconds_total{job!=""})
+                        query: sum by (yext_site, alloc_id) (go_sync_mutex_wait_total_seconds_total{alloc_id!=""})
 
                       - attribute: UserCPUSecondsTotal
-                        query: sum by (yext_site, job) (go_cpu_classes_user_cpu_seconds_total{job!=""})
+                        query: sum by (yext_site, alloc_id) (go_cpu_classes_user_cpu_seconds_total{alloc_id!=""})
 
                       - attribute: GCTotalCPUSecondsTotal
-                        query: sum by (yext_site, job) (go_cpu_classes_gc_total_cpu_seconds_total{job!=""})
+                        query: sum by (yext_site, alloc_id) (go_cpu_classes_gc_total_cpu_seconds_total{alloc_id!=""})
 
                       - attribute: DBConnectionUsage
-                        query: sum by (yext_site, job) (avg_over_time(gorm_dbstats_open_connections[15m]))
+                        query: sum by (yext_site, alloc_id) (avg_over_time(gorm_dbstats_open_connections[15m]))
 
                       - attribute: DBQueryDuration
-                        query: "sum by (yext_site, job) (rate(postgres_queries_sum[1m]) / (rate(postgres_queries_count[1m]) > 0 or (rate(postgres_queries_count[1m]) + 1)))"
+                        query: "sum by (yext_site, alloc_id) (rate(postgres_queries_sum[1m]) / (rate(postgres_queries_count[1m]) > 0 or (rate(postgres_queries_count[1m]) + 1)))"
 
                       - attribute: GoMaxProcs
-                        query: sum by (yext_site, job) (go_sched_gomaxprocs_threads{job!=""})
-
-                    connections: # connections represent connection between entities based on the link Query
-                      - entityType: DatabaseServerInstance
-                        relation: LayeredOver
+                        query: sum by (yext_site, alloc_id) (go_sched_gomaxprocs_threads{alloc_id!=""})
 
               java-applications:
                 entities:
-                  - attributes:
-                      namespace:
-                        label: ["yext_site"]
-                      name:
-                        label: [job"]
-                    entityType: ApplicationInstance
+                  - entity:
+                      workload: {}
+
+                    discovery:
+                      - nomad_allocation:
+                          namespace: "yext_site"
+                          allocation_id: "alloc_id"
+
                     metrics:
                       - attribute: JavaHeapCapacity
                         query: jvm_memory_bytes_max{area="heap"} or jvm_memory_max_bytes{area="heap"}
@@ -246,107 +244,29 @@ job "mediator" {
                         query: jvm_memory_bytes_used{area="heap"} or jvm_memory_used_bytes{area="heap"}
 
                       - attribute: UserCPUSecondsTotal
-                        query: sum by (yext_site, job) (process_cpu_seconds_total{job!=""})
+                        query: sum by (yext_site, alloc_id) (process_cpu_seconds_total{alloc_id!=""})
 
                       - attribute: GCTotalCPUSecondsTotal
-                        query: sum by (yext_site, job) (jvm_gc_collection_seconds_sum{job!=""})
+                        query: sum by (yext_site, alloc_id) (jvm_gc_collection_seconds_sum{alloc_id!=""})
 
               python-applications:
                 entities:
-                  - attributes:
-                      namespace:
-                        label: ["yext_site"]
-                      name:
-                        label: [job"]
-                    entityType: ApplicationInstance
+                  - entity:
+                      workload: {}
+
+                    discovery:
+                      - nomad_allocation:
+                          namespace: "namespace"
+                          allocation_id: "alloc_id"
                     metrics:
                       - attribute: RequestsTotal
-                        query: sum by (yext_site, job) (rate(request_result_total[1m]))
-              postgres:
-                entities:
-                  - entityType: DatabaseServerInstance
-                    metrics:
-                      - attribute: DBConnectionUsage
-                        query: sum(db_client_connections_total) by (yext_site, datasource)
-
-                      - attribute: DBQueryDuration
-                        query: max by (yext_site, data_source) (db_query_duration)
-                    attributes:
-                      namespace:
-                        label: ["yext_site"]
-                      name:
-                        label: [datasource"]
-                    connections: # connections represent connection between entities based on the link Query
-                      - entityType: ApplicationInstance
-                        relation: Clients
-              rabbitmq:
-                entities:
-                  - entityType: BrokerInstance
-                    metrics:
-                      - attribute: MemoryUsage
-                        query: rabbitmq_process_resident_memory_bytes
-
-                      - attribute: MemoryCapacity
-                        query: rabbitmq_resident_memory_limit_bytes
-
-                      - attribute: FileDescriptorUsage
-                        query: rabbitmq_process_open_fds
-
-                      - attribute: FileDescriptorCapacity
-                        query: rabbitmq_process_max_fds
-
-                    attributes:
-                      namespace:
-                        label: ["yext_site"]
-                      name:
-                        label: [instance"]
-                  - entityType: Topic
-                    metrics:
-                      - attribute: QueueDepth
-                        query: rabbitmq_detailed_queue_messages
-                    attributes:
-                      id:
-                        label: ["queue"]
-                    relationships:
-                      - type: LayeredOver
-                        relation: LayeredOver
-                        relatedEntityType: BrokerInstance
-                        attributes:
-                          label: instance
-              kafka:
-                entities:
-                  - entityType: Topic  # Monitor the Lag but the attribute is on the AsyncAccess
-                    metrics:
-                      - attribute: Lag
-                        query: kafka_consumergroup_lag
-                        labels:    # labels are used to find the reference AsyncAccess Entity
-                          - labelKey: DestinationId
-                            promKey: $id
-                          - labelKey: ConsumerGroup
-                            promKey: consumergroup
-                        relatedEntityType: AsyncAccess
-                    labels:  # labels are used to find the reference Topic Entity
-                      - labelKey: Topic
-                        promKey: topic
-                      - labelKey: ClusterId
-                        promKey: cluster
-              redis:
-                entities:
-                  - entityType: CacheInstance
-                    metrics:
-                      - attribute: CacheSize
-                        query: sum by (namespace) (redis_memory_used_bytes)
-
-                      - attribute: CommandLatency
-                        query: sum by (namespace) (rate(redis_commands_duration_seconds_total[1m])/rate(redis_commands_total[5m]))
-                    attributes:
-                      name:
-                        label: ["namespace"]
+                        query: sum by (yext_site, alloc_id) (rate(request_result_total[1m]))
 
           - type: OpenTelemetry
             enabled: true
             sync_interval: 20s
             port: 8360
+            createAssets: true
             logging:
               scraper:
                 level: info
@@ -356,6 +276,16 @@ job "mediator" {
               general:
                 service.namespace:
                   - "deployment.site"
+
+          - type: CauselyServices
+            enabled: true
+            sync_interval: 30s
+            logging:
+              scraper:
+                level: info
+              repository:
+                level: info
+
         EOF
       }
 
@@ -408,24 +338,30 @@ job "mediator" {
           endpoint: "http://victoriametrics:8428"
           period: "24h"
           step: "5m"
-          batch_size: 10
+          batch_size: 100
+          batch_write_size: 1000
           max_backoff_minutes: 20 # 20 minutes max backoff
           initial_backoff_seconds: 1 # Initial backoff delay
-          backoff_multiplier: 2 # Expontential backoff factor
+          backoff_multiplier: 2 # Exponential backoff factor
           jitter: 0.1 # Jitter factor
 
         # Model settings
         model:
+          threshold_method: prophet_legacy
+          iqr:
+            lower_quantile: 0.25
+            upper_quantile: 0.75
+            window_size: 72
           prophet:
             args:
-              daily_seasonality: true
+              changepoint_range: 0.8
+              seasonality_mode: multiplicative
+              interval_width: 0.99
+              daily_seasonality: false
               weekly_seasonality: false
               yearly_seasonality: false
-              seasonality_mode: "multiplicative"
-              interval_width: 0.99
-              changepoint_range: 0.8
             horizon: 12 # 1 hour forecast with 5 minutes interval
-            freq: "5min"
+            freq: 5min
 
         # webserver settings
         webserver:
