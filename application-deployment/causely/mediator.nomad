@@ -301,7 +301,7 @@ job "mediator" {
       config {
         image   = var.ml_image
         command = "/bin/sh"
-        args    = ["-c", "python3 mediator/main.py --config /config/config.yaml"]
+        args    = ["-c", "uv run mediator/main.py --config /config/config.yaml"]
         port_map {
           grpc      = 8361
           webserver2 = 8081
@@ -347,21 +347,26 @@ job "mediator" {
 
         # Model settings
         model:
-          threshold_method: prophet_legacy
+          threshold_method: "iqr"
+          horizon: 12 # 1 hour forecast with 5 minutes interval
+          freq: "5min"
+
+          # IQR model settings
           iqr:
-            lower_quantile: 0.25
-            upper_quantile: 0.75
-            window_size: 72
+            # Window is used to compute rolling statistics
+            window_size: 72       # 6 hour window, 60 (min) / 5 (min) * 6 = 72
+            upper_quantile: 0.95
+            lower_quantile: 0.0
+
+          # Prophet model settings
           prophet:
             args:
-              changepoint_range: 0.8
-              seasonality_mode: multiplicative
-              interval_width: 0.99
               daily_seasonality: false
               weekly_seasonality: false
               yearly_seasonality: false
-            horizon: 12 # 1 hour forecast with 5 minutes interval
-            freq: 5min
+              seasonality_mode: "multiplicative"
+              interval_width: 0.95
+              changepoint_range: 0.8
 
         # webserver settings
         webserver:
