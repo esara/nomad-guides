@@ -141,9 +141,18 @@ job "mediator" {
           tls: false
           insecure: true
 
-        persistence:
-          enabled: true
-          path: /local/mediator
+        repository:
+          persistence:
+            enabled: true
+            path: /data/mediator.gob
+          garbage_collector:
+            enabled: true
+          timeseries_forecast:
+            enabled: true
+          backend_sync:
+            interval: 30s
+          entity_attribute_metrics:
+            enabled: true
 
         global:
           host_root: /host
@@ -180,6 +189,8 @@ job "mediator" {
                 level: info
             nomad_api_endpoint: http://host.docker.internal:4646
             consul_api_endpoint: http://host.docker.internal:8500
+            loki_endpoint: http://loki.docker.internal:3100
+            logs_enabled: true
             token: ""
 
           - type: Prometheus
@@ -218,7 +229,10 @@ job "mediator" {
                         query: sum by (yext_site, alloc_id) (go_cpu_classes_gc_total_cpu_seconds_total{alloc_id!=""})
 
                       - attribute: DBConnectionUsage
-                        query: sum by (yext_site, alloc_id) (avg_over_time(gorm_dbstats_open_connections[15m]))
+                        query: sum by (yext_site, alloc_id) (avg_over_time(go_sql_connections_open[15m]))
+
+                      - attribute: DBConnectionCapacity
+                        query: sum by (yext_site, alloc_id) (avg_over_time(go_sql_connections_max_open[15m]))
 
                       - attribute: DBQueryDuration
                         query: "sum by (yext_site, alloc_id) (rate(postgres_queries_sum[1m]) / (rate(postgres_queries_count[1m]) > 0 or (rate(postgres_queries_count[1m]) + 1)))"
@@ -262,6 +276,43 @@ job "mediator" {
                       - attribute: RequestsTotal
                         query: sum by (yext_site, alloc_id) (rate(request_result_total[1m]))
 
+              rabbitmq:
+                entities:
+                  - discovery:
+                      - nomad_allocation:
+                          namespace: "yext_site"
+                          allocation_id: "alloc_id"
+                    entity:
+                      workload: {}
+                    metrics:
+                      - attribute: MemoryUsage
+                        query: rabbitmq_process_resident_memory_bytes
+                      - attribute: MemoryCapacity
+                        query: rabbitmq_resident_memory_limit_bytes
+                      - attribute: FileDescriptorUsage
+                        query: rabbitmq_process_open_fds
+                      - attribute: FileDescriptorCapacity
+                        query: rabbitmq_process_max_fds
+                  - discovery:
+                      # Use message queue discovery to find queues by queue label
+                      # This works with rabbitmq_queue_messages that has queue labels
+                      # from /metrics/per-object endpoint or rmq_resource_queue joins
+                      - message_queue:
+                          queue_name: "queue"
+                    entity:
+                      queue:
+                        name: queue
+                    metrics:
+                      - attribute: QueueDepth
+                        query: rabbitmq_queue_messages
+                      - attribute: MessageWaitTime
+                        # Calculate wait time using Little's Law: wait_time = queue_depth / consumption_rate
+                        # Uses the absolute rate of change of queue depth as approximation for consumption rate
+                        # When queue is being consumed, rate is negative, so we use abs() to get positive consumption rate
+                        # This gives wait time in seconds. Uses clamp_min() to avoid division by zero
+                        # Note: This is an approximation - for accurate consumption rate, use rabbitmq_queue_messages_delivered_total if available
+                        query: avg_over_time(rabbitmq_queue_messages[5m]) / clamp_min(abs(rate(rabbitmq_queue_messages[5m])), 0.01)
+
           - type: OpenTelemetry
             enabled: true
             sync_interval: 20s
@@ -291,7 +342,7 @@ job "mediator" {
 
       volume_mount {
         volume      = "repository"
-        destination = "/local"
+        destination = "/data"
       }
     }
 
@@ -347,6 +398,7 @@ job "mediator" {
 
         # Model settings
         model:
+          min_threshold_ms: 10.00
           threshold_method: "iqr"
           horizon: 12 # 1 hour forecast with 5 minutes interval
           freq: "5min"
@@ -356,7 +408,8 @@ job "mediator" {
             # Window is used to compute rolling statistics
             window_size: 72       # 6 hour window, 60 (min) / 5 (min) * 6 = 72
             upper_quantile: 0.95
-            lower_quantile: 0.0
+            lower_quantile: 0.00
+          min_threshold_ms: 10
 
           # Prophet model settings
           prophet:
@@ -365,7 +418,7 @@ job "mediator" {
               weekly_seasonality: false
               yearly_seasonality: false
               seasonality_mode: "multiplicative"
-              interval_width: 0.95
+              interval_width: 0.99
               changepoint_range: 0.8
 
         # webserver settings
